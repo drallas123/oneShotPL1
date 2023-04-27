@@ -1,0 +1,208 @@
+ BVZ00XX:PROC(PARAM) OPTIONS(MAIN);
+
+ /*             P R O G R A M        S P E C I F I C A T I O N
+                ----------------------------------------------
+
+     PROGRAMMER NAME :                              PHASE NAME
+                                                    ----------
+     LANGUAGE        : PLI                            BVZ00XX
+
+     DEFINITION      : ONE SHOT UPDATE NISS
+
+ +---------+------------------------------+---+-------+-------+-------+
+ !FILE NAME! FILE IDENTIFICATION          !I/O!TAP/DIS! N.TAPE!RECSIZE!
+ !         !                              ! U !       !       !       !
+ +---------+------------------------------+---+-------+-------+-------+
+ ! LIST    ! FOUTLIJSTEN                  ! O !       !       !  130  !
+ +---------+------------------------------+---+-------+-------+-------+
+ +----------------------------------------------------------------+
+ ! DATACOM                                                        !
+ ! TABLES                                                         !
+ +----------------------------------------------------------------+
+ ! THOPRA                                                         !
+ +----------------------------------------------------------------+
+
+ /***** MODIFICATIONS ************************************************/
+ /* 24.03.2023 : NEW PROGRAM                                    XXXX */
+ /********************************************************************/
+ /*PROGRAM SUMMARY                                                   */
+ /********************************************************************/
+ /* INITILIZATION                                                    */
+ /********************************************************************/
+
+   %INCLUDE $$BATCIC;
+   %DECLARE NOM CHARACTER;
+   %INCLUDE CSBECV23;
+
+   DCL OFILE              FILE OUTPUT RECORD;
+
+   DCL PARAM              CHAR(12) VARYING;
+ /*DCL HLIDNR             CHAR(7) INIT ('');
+   DCL HNISSNR            CHAR(11) INIT ('');
+   DCL HGEBP              CHAR(8) INIT ('');*/
+
+   DCL 1 HEADER,
+         2 TLINR          CHAR(8) INIT(' MATRIC.'),
+         2 *              CHAR(3) INIT(' | '),
+         2 TNISNR         CHAR(11) INIT('N.I.S.S.'),
+         2 *              CHAR(3) INIT(' | '),
+         2 TDDNAIS        CHAR(8) INIT('DDNAISS.'),
+         2 *              CHAR(3) INIT(' | '),
+         2 TNOM           CHAR(25) INIT('           NOM           '),
+         2 *              CHAR(3) INIT(' | '),
+         2 TPNOM          CHAR(15) INIT('     PRENOM    ');
+   DCL 1 DBINFO,
+         2 *              CHAR(1) INIT(' '),
+         2 HLIDNR         CHAR(7) INIT(''),
+         2 *              CHAR(3) INIT(' | '),
+         2 HNISSNR        CHAR(11) INIT(''),
+         2 *              CHAR(3) INIT(' | '),
+         2 HGEBP          CHAR(8) INIT(''),
+         2 *              CHAR(3) INIT(' | '),
+         2 HNOMP          CHAR(25) INIT(''),
+         2 *              CHAR(3) INIT(' | '),
+         2 HVNMP          CHAR(15) INIT('');
+
+   DCL HSEXEP             CHAR(1) INIT('');
+   DCL HSEXEP_X           CHAR(1) INIT('');
+
+ /*DCL 1 DBTMP,
+         2 XLIDNR         CHAR(7) INIT(''),
+         2 *              CHAR(72) INIT((69)'*');*/
+
+   DCL FILLER             CHAR(79) INIT((79)'*');
+   DCL NUM                CHAR(10) INIT('0123456789');
+   DCL IT_COUNT           FIXED BIN(31) INIT(0);
+
+ /*-----------------------BEGIN INITIALIZATION-----------------------*/
+
+   SBECV23_HD_I ='';
+   SBECV23_HD_I.SERVICE.CDVRNIT_M = '01';
+   SBECV23_HD_I.SERVICE.CDVRNIT_N = '00';
+   SBECV23_HD_I.SERVICE.CALL_ORIGIN = 'BLN';
+   SBECV23_HD_I.SERVICE.LANGUAGE = 'FR';
+   SBECV23_HD_I.ENVELOPE.CDTRNID = 'BVZ00XX';
+
+   EXEC SQL INCLUDE SQLCA;
+   EXEC SQL INCLUDE THOPRD;
+
+   OPEN FILE(OFILE);
+
+ /*----------------------------DECLARE-------------------------------*/
+
+   EXEC SQL DECLARE
+    CUR1 CURSOR WITH HOLD FOR
+   SELECT
+    ILIDNR,
+    IGEBP,
+    INOMP,
+    ISEXEP,
+    IVNMP
+   FROM
+    THOPRD
+   WHERE
+    (IDAT1 >= 20130101 AND IDAT1 < 99999999)
+   FOR UPDATE OF NISS_NBR;
+  /*GROUP BY
+    ILIDNR,
+    IGEBP,
+    INOMP,
+    IVNMP;*/
+
+ /*-----------------------------BODY---------------------------------*/
+
+   SBECV23_I02 ='';
+   SBECV23_I02.ALLOW_FUTURE_INFO = 'Y';
+
+   IF ^OPEN_CUR1() THEN RETURN;
+   WRITE FILE(OFILE) FROM(HEADER);
+   WRITE FILE(OFILE) FROM(FILLER);
+
+   DO WHILE(FETCH_CUR1());
+     IT_COUNT = IT_COUNT + 1;
+     IF MOD(IT_COUNT, 1000) = 0 THEN
+     DO;
+       PUT SKIP LIST('RECORD NBR: ' !! IT_COUNT);
+     END;
+
+     IF VERIFY(HLIDNR,NUM) ^= 0 THEN ITERATE;
+     SBECV23_I02.MUTU_IDENT_NBR = HLIDNR !! SUBSTR(HGEBP,1,4) !!
+                                            SUBSTR(HGEBP,7,2);
+     IF HSEXEP = 'M' THEN HSEXEP_X = '1';
+     ELSE HSEXEP_X = '2';
+     SBECV23_I02.SEX_CD = HSEXEP_X;
+     /*DBTMP.XLIDNR = HLIDNR;*/
+     /*WRITE FILE(OFILE) FROM(DBTMP);*/
+     CALL INVOKE_SBECV23
+          ('GET_MINIMUM_AFF_INFO.01.00',SBECV23_HD_I);
+     IF SBECV23_HD_O.STATUS.CDSTPGM = 'E' THEN
+     DO;
+       HNISSNR = 'INCONNU';
+       WRITE FILE(OFILE) FROM(DBINFO);
+     END;
+     ELSE
+     DO;
+       HNISSNR = SBECV23_O02.AFF_INFO.NISS_NBR;
+       CALL UPDATE_DB();
+     /*WRITE FILE(OFILE) FROM(DBINFO);*/
+     END;
+   END;
+
+   CLOSE FILE(OFILE);
+   /*EXEC SQL CLOSE CUR1;*/
+   IF ^CLOSE_CUR1() THEN RETURN;
+
+ /*--------------------------OPEN CURSOR-----------------------------*/
+   OPEN_CUR1: PROC RETURNS (BIT(1));
+             EXEC SQL OPEN
+             CUR1;
+             IF SQLCODE ^= 0
+               THEN DO;
+                    RETURN('0'B);
+             END;
+     RETURN ('1'B);
+   END OPEN_CUR1;
+
+ /*--------------------------FETCH CURSOR----------------------------*/
+   FETCH_CUR1: PROC RETURNS(BIT(1));
+   EXEC SQL FETCH
+     CUR1
+    INTO
+     :HLIDNR ,
+     :HGEBP,
+     :HNOMP,
+     :HSEXEP,
+     :HVNMP;
+
+   IF SQLCODE ^= 0
+   THEN DO;
+     RETURN('0'B);
+   END;
+     RETURN ('1'B);
+
+   END FETCH_CUR1;
+ /*--------------------------UPDATE DB-------------------------------*/
+   UPDATE_DB: PROC();
+     EXEC SQL
+     UPDATE THOPRD
+     SET NISS_NBR =:HNISSNR
+     WHERE
+     CURRENT OF CUR1;
+  /* ILIDNR =:HLIDNR
+     AND
+     IGEBP =:HGEBP */
+
+   END UPDATE_DB;
+ /*--------------------------CLOSE CURSOR----------------------------*/
+   CLOSE_CUR1: PROC RETURNS (BIT(1));
+             EXEC SQL CLOSE
+             CUR1;
+             IF SQLCODE ^= 0
+               THEN DO;
+                    RETURN('0'B);
+             END;
+     RETURN ('1'B);
+   END CLOSE_CUR1;
+ /*------------------------------------------------------------------*/
+
+ END BVZ00XX;
